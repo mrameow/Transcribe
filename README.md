@@ -87,7 +87,7 @@ flutter build windows --release               # Windows, needs Visual Studio "De
 flutter build apk --release --split-per-abi   # Android, needs the Android SDK + Java 17
 ```
 
-GitHub Actions builds every push. Pushing a tag such as `v1.2.0` publishes a release with the APKs, the Windows installer and the portable zip. The Windows installer is made with Inno Setup from `windows/installer/transcribe.iss`.
+GitHub Actions builds every push. Each push to `main` publishes (or updates) the GitHub Release for the version in `pubspec.yaml`, with the APKs, the Windows installer and the portable zip. To release a new version, bump `version:` in `pubspec.yaml`. The Windows installer is made with Inno Setup from `windows/installer/transcribe.iss`.
 
 Release APKs are signed with the debug key. That's fine for installing them yourself, but not for the Play Store.
 
