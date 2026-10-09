@@ -44,7 +44,6 @@ jobs:
           mkdir dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/Transcribe-android-arm64.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/Transcribe-android-arm32.apk
-          cp build/app/outputs/flutter-apk/app-x86_64-release.apk dist/Transcribe-android-x86_64.apk
       - uses: actions/upload-artifact@v4
         with:
           name: Transcribe-android
@@ -61,15 +60,31 @@ jobs:
           channel: stable
           cache: true
       - run: flutter build windows --release
-      - name: Zip app
+      - name: Bundle the Visual C++ runtime
+        shell: pwsh
+        run: |
+          # So the app also starts on PCs without the VC++ redistributable.
+          foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            Copy-Item "$env:SystemRoot\System32\$dll" build/windows/x64/runner/Release/
+          }
+      - name: Build installer and portable zip
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath dist/Transcribe-windows-x64.zip
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          & $iscc "/DAppVersion=$version" windows\installer\transcribe.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath dist/Transcribe-windows-portable.zip
       - uses: actions/upload-artifact@v4
         with:
           name: Transcribe-windows
-          path: dist/*.zip
+          path: |
+            dist/*.exe
+            dist/*.zip
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -84,4 +99,17 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          name: Transcribe ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            ## Download
+
+            | File | For |
+            |---|---|
+            | **Transcribe-android-arm64.apk** | Android phones (Samsung Galaxy S25 and almost every phone from the last 7 years) |
+            | Transcribe-android-arm32.apk | Very old / low-end Android phones |
+            | **Transcribe-windows-setup.exe** | Windows 10/11 installer |
+            | Transcribe-windows-portable.zip | Windows without installing: unzip and run `transcribe.exe` |
+
+            After installing, open the app, tap the download icon and get a speech model once. Then everything works offline.
           files: dist/*

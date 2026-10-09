@@ -16,23 +16,22 @@ void main() {
   final archives = Platform.environment['TRANSCRIBE_TEST_ARCHIVES'];
   final skip = archives == null ? 'set TRANSCRIBE_TEST_ARCHIVES' : null;
   late Directory tmp;
-  late Float32List audio;
-  late int audioRate;
 
   setUpAll(() {
     if (archives == null) return;
     tmp = Directory.systemTemp.createTempSync('transcribe_test');
     sherpa.initBindings();
-    final wave = sherpa.readWave(p.join(archives, 'test.wav'));
-    audio = wave.samples;
-    audioRate = wave.sampleRate;
   });
 
   tearDownAll(() {
     if (archives != null) tmp.deleteSync(recursive: true);
   });
 
-  Future<List<TranscriptUpdate>> run(ModelInfo model) async {
+  Future<List<TranscriptUpdate>> run(
+    ModelInfo model, {
+    List<String> languages = const ['en'],
+    List<String> wavs = const ['test.wav'],
+  }) async {
     final dir = p.join(tmp.path, model.id);
     final copy = File(p.join(archives!, '${model.id}.tar.bz2'))
         .copySync(p.join(tmp.path, 'copy.tar.bz2'));
@@ -43,14 +42,21 @@ void main() {
         kind: model.kind,
         files: files,
         vadModel: p.join(archives, vadFileName),
-        language: 'en',
+        languages: languages,
         sentenceCase: model.sentenceCase,
       ),
     );
     final updates = <TranscriptUpdate>[];
     final sub = session.updates.listen(updates.add);
-    // Feed in 100 ms chunks like the live capture does, followed by silence.
-    final samples = Float32List.fromList([...audio, ...Float32List(audioRate)]);
+    // Feed in 100 ms chunks like the live capture does, with silence after
+    // each clip.
+    const audioRate = 16000;
+    final samples = Float32List.fromList([
+      for (final wav in wavs) ...[
+        ...sherpa.readWave(p.join(archives, wav)).samples,
+        ...Float32List(audioRate * 3 ~/ 2),
+      ],
+    ]);
     final chunk = audioRate ~/ 10;
     for (var i = 0; i < samples.length; i += chunk) {
       session.addAudio(
@@ -73,7 +79,9 @@ void main() {
   test(
     'streaming model transcribes speech',
     () async {
-      final updates = await run(modelCatalog[0]);
+      final updates = await run(
+        modelById('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17')!,
+      );
       expect(updates.any((u) => !u.isFinal), isTrue);
       expect(finals(updates), contains('yellow lamps'));
     },
@@ -89,5 +97,46 @@ void main() {
     },
     skip: skip,
     timeout: const Timeout(Duration(minutes: 3)),
+  );
+
+  bool has(String id) =>
+      archives != null && File(p.join(archives, '$id.tar.bz2')).existsSync();
+
+  test(
+    'parakeet transcribes English with punctuation',
+    () async {
+      const id = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8';
+      final updates = await run(modelById(id)!);
+      expect(
+        updates.where((u) => u.isFinal).map((u) => u.text).join(' '),
+        contains('After early nightfall'),
+      );
+    },
+    skip: has('sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8')
+        ? null
+        : 'needs the Parakeet archive',
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
+
+  // ms.wav / en.wav: short Malay and English sentences (16 kHz), e.g.
+  // "Selamat pagi semua..." and "Good morning everyone...".
+  test(
+    'whisper picks between Malay and English per sentence',
+    () async {
+      final updates = await run(
+        modelById('sherpa-onnx-whisper-turbo')!,
+        languages: ['en', 'ms'],
+        wavs: ['ms.wav', 'en.wav'],
+      );
+      final text = finals(updates);
+      expect(text, contains('selamat pagi semua'));
+      expect(text, contains('good morning everyone'));
+    },
+    skip:
+        has('sherpa-onnx-whisper-turbo') &&
+            File(p.join(archives ?? '', 'ms.wav')).existsSync()
+        ? null
+        : 'needs Whisper Turbo and ms.wav/en.wav',
+    timeout: const Timeout(Duration(minutes: 10)),
   );
 }

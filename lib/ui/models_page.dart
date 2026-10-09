@@ -94,12 +94,11 @@ class _ModelTile extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(
-                  model.kind == EngineKind.streaming
-                      ? Icons.bolt
-                      : Icons.translate,
-                  color: theme.colorScheme.primary,
-                ),
+                Icon(switch (model.kind) {
+                  EngineKind.streaming => Icons.bolt,
+                  EngineKind.whisper => Icons.translate,
+                  EngineKind.parakeet => Icons.record_voice_over,
+                }, color: theme.colorScheme.primary),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(model.title, style: theme.textTheme.titleMedium),
@@ -116,6 +115,22 @@ class _ModelTile extends StatelessWidget {
                 trailing,
               ],
             ),
+            if (model.badge != null) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.tertiaryContainer,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  model.badge!,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: theme.colorScheme.onTertiaryContainer,
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 4),
             Text(model.description, style: theme.textTheme.bodyMedium),
             if (busy) ...[
@@ -124,7 +139,7 @@ class _ModelTile extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 progress == null
-                    ? 'Unpacking… (this can take a minute)'
+                    ? 'Unpacking… (large models can take a few minutes)'
                     : 'Downloading… ${(progress * 100).toStringAsFixed(0)}%',
                 style: theme.textTheme.bodySmall,
               ),
@@ -163,7 +178,7 @@ class _ManualInstallNote extends StatelessWidget {
             const Text(
               'Download the model .tar.bz2 on another computer from the '
               'sherpa-onnx "asr-models" release, unpack it, and copy the '
-              'folder (and silero_vad.onnx for Whisper) into:',
+              'folder (and silero_vad.onnx for Whisper and Parakeet) into:',
             ),
             const SizedBox(height: 6),
             Row(

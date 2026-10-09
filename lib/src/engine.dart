@@ -17,7 +17,7 @@ class EngineConfig {
     required this.kind,
     required this.files,
     this.vadModel,
-    this.language = '',
+    this.languages = const [],
     this.sentenceCase = false,
     this.numThreads = 2,
   });
@@ -25,7 +25,10 @@ class EngineConfig {
   final EngineKind kind;
   final ModelFiles files;
   final String? vadModel;
-  final String language;
+
+  /// Allowed Whisper languages. Empty means detect any language; one fixes
+  /// the language; several lets Whisper choose between them per sentence.
+  final List<String> languages;
   final bool sentenceCase;
   final int numThreads;
 }
@@ -45,7 +48,7 @@ class TranscriptUpdate {
 abstract class TranscriptionEngine {
   factory TranscriptionEngine(EngineConfig config) => switch (config.kind) {
     EngineKind.streaming => StreamingEngine(config),
-    EngineKind.whisper => WhisperEngine(config),
+    EngineKind.whisper || EngineKind.parakeet => OfflineEngine(config),
   };
 
   /// Feeds 16 kHz mono samples in the range [-1, 1].
@@ -141,24 +144,14 @@ class StreamingEngine implements TranscriptionEngine {
   }
 }
 
-/// Whisper run on speech segments cut by the Silero voice activity detector.
-class WhisperEngine implements TranscriptionEngine {
-  WhisperEngine(this.config) {
-    final f = config.files;
+/// Sentence-at-a-time recognition: the Silero voice activity detector cuts
+/// the audio into speech segments and each one is transcribed by an offline
+/// model (Whisper or NVIDIA Parakeet).
+class OfflineEngine implements TranscriptionEngine {
+  OfflineEngine(this.config) {
     _recognizer = sherpa.OfflineRecognizer(
-      sherpa.OfflineRecognizerConfig(
-        model: sherpa.OfflineModelConfig(
-          whisper: sherpa.OfflineWhisperModelConfig(
-            encoder: f.encoder,
-            decoder: f.decoder,
-            language: config.language,
-            task: 'transcribe',
-          ),
-          tokens: f.tokens,
-          numThreads: config.numThreads,
-          debug: false,
-          modelType: 'whisper',
-        ),
+      _recognizerConfig(
+        config.languages.length == 1 ? config.languages.first : '',
       ),
     );
     _vadConfig = sherpa.VadModelConfig(
@@ -184,10 +177,46 @@ class WhisperEngine implements TranscriptionEngine {
   late final sherpa.VadModelConfig _vadConfig;
   late final sherpa.VoiceActivityDetector _vad;
 
+  /// Whisper language the recognizer is currently set to ('' = detect).
+  String _language = '';
+
   final _pending = <double>[];
   bool _speaking = false;
 
   int get _window => _vadConfig.sileroVad.windowSize;
+
+  bool get _isWhisper => config.kind == EngineKind.whisper;
+
+  sherpa.OfflineRecognizerConfig _recognizerConfig(String language) {
+    _language = language;
+    final f = config.files;
+    return sherpa.OfflineRecognizerConfig(
+      model: _isWhisper
+          ? sherpa.OfflineModelConfig(
+              whisper: sherpa.OfflineWhisperModelConfig(
+                encoder: f.encoder,
+                decoder: f.decoder,
+                language: language,
+                task: 'transcribe',
+              ),
+              tokens: f.tokens,
+              numThreads: config.numThreads,
+              debug: false,
+              modelType: 'whisper',
+            )
+          : sherpa.OfflineModelConfig(
+              transducer: sherpa.OfflineTransducerModelConfig(
+                encoder: f.encoder,
+                decoder: f.decoder,
+                joiner: f.joiner!,
+              ),
+              tokens: f.tokens,
+              numThreads: config.numThreads,
+              debug: false,
+              modelType: 'nemo_transducer',
+            ),
+    );
+  }
 
   @override
   List<TranscriptUpdate> accept(Float32List samples) {
@@ -224,11 +253,37 @@ class WhisperEngine implements TranscriptionEngine {
 
   /// Transcribes one chunk of 16 kHz audio.
   String transcribe(Float32List samples) {
+    final langs = config.languages;
+    if (!_isWhisper || langs.length < 2) {
+      return _clean(_decode(samples).text);
+    }
+
+    // Several languages allowed: let Whisper detect the language, and if it
+    // picks one outside the allowed set (Malay is often heard as Indonesian
+    // or Javanese), transcribe again in the closest allowed language.
+    if (_language.isNotEmpty) _recognizer.setConfig(_recognizerConfig(''));
+    final first = _decode(samples);
+    final detected = normalizeWhisperLanguage(first.lang);
+    if (langs.contains(detected)) return _clean(first.text);
+
+    final target = closestLanguage(detected, langs);
+    _recognizer.setConfig(_recognizerConfig(target));
+    final second = _decode(samples);
+    _recognizer.setConfig(_recognizerConfig(''));
+    return _clean(second.text);
+  }
+
+  sherpa.OfflineRecognizerResult _decode(Float32List samples) {
     final stream = _recognizer.createStream();
     stream.acceptWaveform(samples: samples, sampleRate: engineSampleRate);
     _recognizer.decode(stream);
-    final text = _recognizer.getResult(stream).text.trim();
+    final result = _recognizer.getResult(stream);
     stream.free();
+    return result;
+  }
+
+  static String _clean(String raw) {
+    final text = raw.trim();
     return _isNoise(text) ? '' : text;
   }
 
@@ -256,6 +311,27 @@ class WhisperEngine implements TranscriptionEngine {
     _vad.free();
     _recognizer.free();
   }
+}
+
+/// Turns Whisper's language tag (e.g. "<|ms|>" or "ms") into a plain code.
+String normalizeWhisperLanguage(String lang) =>
+    lang.replaceAll(RegExp(r'[<|>]'), '').trim().toLowerCase();
+
+/// Languages Whisper tends to confuse with each other.
+const _similarLanguages = <String, List<String>>{
+  'ms': ['id', 'jw', 'su', 'tl'],
+  'id': ['ms', 'jw', 'su'],
+  'zh': ['yue', 'ja'],
+  'en': ['cy', 'la', 'nn', 'no'],
+};
+
+/// Picks which allowed language to use when Whisper detected [detected],
+/// which is not one of [allowed]. Falls back to the first allowed language.
+String closestLanguage(String detected, List<String> allowed) {
+  for (final lang in allowed) {
+    if (_similarLanguages[lang]?.contains(detected) ?? false) return lang;
+  }
+  return allowed.first;
 }
 
 /// Runs a [TranscriptionEngine] on a background isolate so recognition never

@@ -3,8 +3,10 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 
 import '../src/audio_capture.dart';
 import '../src/engine.dart';
@@ -13,6 +15,7 @@ import '../src/model_downloads.dart';
 import '../src/model_manager.dart';
 import '../src/settings.dart';
 import '../src/transcript.dart';
+import 'language_dialog.dart';
 import 'models_page.dart';
 
 enum _State { idle, starting, running, stopping }
@@ -31,7 +34,8 @@ class _HomePageState extends State<HomePage> {
 
   AudioSourceKind _source = AudioSourceKind.system;
   String? _modelId;
-  String _language = '';
+  List<String> _languages = const ['en', 'ms'];
+  String? _saveDir;
 
   _State _state = _State.idle;
   final _capture = AudioCapture();
@@ -75,7 +79,11 @@ class _HomePageState extends State<HomePage> {
         _source = sources.first;
       }
       _modelId = settings.getString('model');
-      _language = settings.getString('language') ?? '';
+      final langs = settings.getString('languages');
+      if (langs != null) {
+        _languages = langs.split(',').where((c) => c.isNotEmpty).toList();
+      }
+      _saveDir = settings.getString('saveDir');
       _ensureModelSelected();
     });
   }
@@ -110,7 +118,7 @@ class _HomePageState extends State<HomePage> {
     final model = modelById(_modelId);
     final config = model == null
         ? null
-        : _downloads!.manager.engineConfig(model, language: _language);
+        : _downloads!.manager.engineConfig(model, languages: _languages);
     if (config == null) {
       _toast('Download a speech model first');
       return;
@@ -127,7 +135,8 @@ class _HomePageState extends State<HomePage> {
         _onUpdate,
         onError: (Object e) => _toast('$e'),
       );
-      _file = await TranscriptFile.create(DateTime.now());
+      final dir = await transcriptsDirectory(_saveDir);
+      _file = await TranscriptFile.create(dir, DateTime.now());
       _sampleRate = null;
       _early.clear();
       final rate = await _capture.start(
@@ -242,10 +251,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _showSaved() async {
-    final dir = await transcriptsDirectory();
+    final dir = await transcriptsDirectory(_saveDir);
     if (!mounted) return;
+    final customFailed = _saveDir != null && !p.equals(dir.path, _saveDir!);
     final current = _file?.file.path;
-    await showDialog<void>(
+    final action = await showDialog<String>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('Saved transcripts'),
@@ -258,17 +268,35 @@ class _HomePageState extends State<HomePage> {
             ),
             const SizedBox(height: 8),
             SelectableText(dir.path),
+            if (customFailed) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Your chosen folder could not be written to, so the default '
+                'folder is used.',
+                style: TextStyle(color: Theme.of(c).colorScheme.error),
+              ),
+            ],
             if (current != null) ...[
               const SizedBox(height: 12),
               const Text('Latest file:'),
-              SelectableText(current.split(Platform.pathSeparator).last),
+              SelectableText(p.basename(current)),
             ],
           ],
         ),
         actions: [
+          if (_saveDir != null)
+            TextButton(
+              onPressed: () => Navigator.pop(c, 'reset'),
+              child: const Text('Use default'),
+            ),
+          if (Platform.isWindows)
+            TextButton(
+              onPressed: () => Navigator.pop(c, 'open'),
+              child: const Text('Open folder'),
+            ),
           TextButton(
-            onPressed: () => Clipboard.setData(ClipboardData(text: dir.path)),
-            child: const Text('Copy folder path'),
+            onPressed: () => Navigator.pop(c, 'change'),
+            child: const Text('Change folder'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(c),
@@ -277,6 +305,49 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
     );
+    switch (action) {
+      case 'open':
+        await Process.run('explorer', [dir.path]);
+      case 'reset':
+        setState(() => _saveDir = null);
+        await _settings?.setString('saveDir', null);
+        _toast('Transcripts will be saved in the default folder');
+      case 'change':
+        await _pickSaveDir(dir.path);
+    }
+  }
+
+  Future<void> _pickSaveDir(String current) async {
+    final String? picked;
+    try {
+      picked = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose where to save transcripts',
+        initialDirectory: current,
+      );
+    } catch (e) {
+      _toast('Could not open the folder picker: $e');
+      return;
+    }
+    if (picked == null) return;
+    if (!await isWritableDirectory(picked)) {
+      _toast(
+        Platform.isAndroid
+            ? 'Android does not allow saving there. Pick a folder inside '
+                  'Documents or Download.'
+            : 'Cannot save files in that folder. Pick another one.',
+      );
+      return;
+    }
+    setState(() => _saveDir = picked);
+    await _settings?.setString('saveDir', picked);
+    _toast('Transcripts will be saved in $picked');
+  }
+
+  Future<void> _chooseLanguages() async {
+    final result = await showLanguageDialog(context, _languages);
+    if (result == null) return;
+    setState(() => _languages = result);
+    await _settings?.setString('languages', result.join(','));
   }
 
   void _clear() => setState(() {
@@ -301,7 +372,17 @@ class _HomePageState extends State<HomePage> {
     final busy = _state != _State.idle;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Transcribe'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(7),
+              child: Image.asset('assets/logo.png', width: 30, height: 30),
+            ),
+            const SizedBox(width: 10),
+            const Text('Transcribe'),
+          ],
+        ),
         actions: [
           IconButton(
             tooltip: 'Copy transcript',
@@ -406,20 +487,11 @@ class _HomePageState extends State<HomePage> {
               _settings?.setString('model', id);
             },
           ),
-          if (model?.kind == EngineKind.whisper)
-            DropdownMenu<String>(
-              enabled: !busy,
-              label: const Text('Language'),
-              initialSelection: _language,
-              width: 200,
-              dropdownMenuEntries: [
-                for (final e in whisperLanguages.entries)
-                  DropdownMenuEntry(value: e.key, label: e.value),
-              ],
-              onSelected: (code) {
-                setState(() => _language = code ?? '');
-                _settings?.setString('language', code ?? '');
-              },
+          if (model?.multilingual ?? false)
+            OutlinedButton.icon(
+              onPressed: busy ? null : _chooseLanguages,
+              icon: const Icon(Icons.translate),
+              label: Text(describeLanguages(_languages)),
             ),
         ],
       ),
@@ -593,11 +665,13 @@ class _EmptyHint extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 480),
           child: Column(
             children: [
-              Icon(
-                running ? Icons.hearing : Icons.subtitles_outlined,
-                size: 56,
-                color: theme.colorScheme.primary,
-              ),
+              if (running)
+                Icon(Icons.hearing, size: 56, color: theme.colorScheme.primary)
+              else
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Image.asset('assets/logo.png', width: 72, height: 72),
+                ),
               const SizedBox(height: 16),
               Text(
                 title,

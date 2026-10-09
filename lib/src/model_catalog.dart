@@ -12,6 +12,10 @@ enum EngineKind {
   /// OpenAI Whisper, run sentence-by-sentence using voice activity detection.
   /// Slower but multilingual and usually more accurate, with punctuation.
   whisper,
+
+  /// NVIDIA Parakeet TDT (English), also run sentence-by-sentence. Very
+  /// accurate and fast, with punctuation and capitalisation.
+  parakeet,
 }
 
 class ModelInfo {
@@ -22,6 +26,7 @@ class ModelInfo {
     required this.kind,
     required this.downloadMb,
     this.sentenceCase = false,
+    this.badge,
   });
 
   /// Archive / folder name on the sherpa-onnx release page.
@@ -35,6 +40,15 @@ class ModelInfo {
   /// sentence case for readability.
   final bool sentenceCase;
 
+  /// Short highlight shown on the model card, e.g. "Best for Malay".
+  final String? badge;
+
+  /// Whether the user can choose languages for this model.
+  bool get multilingual => kind == EngineKind.whisper;
+
+  /// Needs the voice activity detection model as well.
+  bool get needsVad => kind != EngineKind.streaming;
+
   String get url => '$_releaseBase/$id.tar.bz2';
 }
 
@@ -47,49 +61,68 @@ const vadUrl = '$_releaseBase/$vadFileName';
 
 const modelCatalog = <ModelInfo>[
   ModelInfo(
-    id: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
-    title: 'English · Live (fast)',
+    id: 'sherpa-onnx-whisper-turbo',
+    title: 'Whisper Turbo · Multilingual',
     description:
-        'Small streaming model. Text appears instantly as people talk. '
-        'Best for phones and older PCs.',
-    kind: EngineKind.streaming,
-    downloadMb: 122,
-    sentenceCase: true,
-  ),
-  ModelInfo(
-    id: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
-    title: 'English · Live (accurate)',
-    description:
-        'Larger streaming model with better accuracy. Needs a reasonably '
-        'fast device.',
-    kind: EngineKind.streaming,
-    downloadMb: 296,
-    sentenceCase: true,
-  ),
-  ModelInfo(
-    id: 'sherpa-onnx-whisper-tiny',
-    title: 'Whisper Tiny · Multilingual',
-    description:
-        '99 languages incl. English, Malay, Chinese, Tamil, Indonesian. '
-        'Text appears after each sentence. Fast.',
+        'Most accurate for Malay, English and Malay–English mixing (99 '
+        'languages). Text appears after each sentence. Needs a fast phone '
+        '(e.g. Galaxy S23 or newer) or PC. Uses about 1 GB.',
     kind: EngineKind.whisper,
-    downloadMb: 111,
+    downloadMb: 538,
+    badge: 'Best for Malay + English',
   ),
   ModelInfo(
-    id: 'sherpa-onnx-whisper-base',
-    title: 'Whisper Base · Multilingual',
+    id: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
+    title: 'Parakeet · English',
     description:
-        'More accurate than Tiny, about 2x slower. Good default for PCs.',
-    kind: EngineKind.whisper,
-    downloadMb: 198,
+        'NVIDIA Parakeet TDT 0.6B. Very accurate English with punctuation, '
+        'and fast. Text appears after each sentence. English only.',
+    kind: EngineKind.parakeet,
+    downloadMb: 460,
+    badge: 'Best for English',
   ),
   ModelInfo(
     id: 'sherpa-onnx-whisper-small',
     title: 'Whisper Small · Multilingual',
     description:
-        'Much more accurate, but needs a fast PC. Too slow for most phones.',
+        'Good accuracy, smaller than Turbo (about 380 MB). For Malay, pick '
+        'Malay + English rather than Auto-detect.',
     kind: EngineKind.whisper,
     downloadMb: 610,
+  ),
+  ModelInfo(
+    id: 'sherpa-onnx-whisper-base',
+    title: 'Whisper Base · Multilingual',
+    description: 'Faster than Small, less accurate. For older phones and PCs.',
+    kind: EngineKind.whisper,
+    downloadMb: 198,
+  ),
+  ModelInfo(
+    id: 'sherpa-onnx-whisper-tiny',
+    title: 'Whisper Tiny · Multilingual',
+    description: 'Fastest Whisper model, lowest accuracy.',
+    kind: EngineKind.whisper,
+    downloadMb: 111,
+  ),
+  ModelInfo(
+    id: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
+    title: 'English · Live (accurate)',
+    description:
+        'Words appear instantly while people talk. Less accurate than '
+        'Parakeet, no punctuation.',
+    kind: EngineKind.streaming,
+    downloadMb: 296,
+    sentenceCase: true,
+  ),
+  ModelInfo(
+    id: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+    title: 'English · Live (fast)',
+    description:
+        'Tiny streaming model for old devices. Words appear instantly, but '
+        'it makes many mistakes.',
+    kind: EngineKind.streaming,
+    downloadMb: 122,
+    sentenceCase: true,
   ),
 ];
 
@@ -100,9 +133,8 @@ ModelInfo? modelById(String? id) {
   return null;
 }
 
-/// Languages offered for Whisper. An empty code means auto-detect.
+/// Languages offered for Whisper.
 const whisperLanguages = <String, String>{
-  '': 'Auto-detect',
   'en': 'English',
   'ms': 'Malay',
   'id': 'Indonesian',
@@ -135,7 +167,7 @@ class ModelFiles {
   final String decoder;
   final String tokens;
 
-  /// Only used by streaming transducer models.
+  /// Only used by transducer models (streaming and Parakeet).
   final String? joiner;
 }
 
@@ -164,9 +196,10 @@ ModelFiles? pickModelFiles(Iterable<String> names, EngineKind kind) {
   final tokens = candidates.where((n) => base(n).endsWith('tokens.txt'));
   final encoder = pick('encoder');
   final decoder = pick('decoder');
-  final joiner = kind == EngineKind.streaming ? pick('joiner') : null;
+  final needsJoiner = kind != EngineKind.whisper;
+  final joiner = needsJoiner ? pick('joiner') : null;
   if (tokens.isEmpty || encoder == null || decoder == null) return null;
-  if (kind == EngineKind.streaming && joiner == null) return null;
+  if (needsJoiner && joiner == null) return null;
   return ModelFiles(
     encoder: encoder,
     decoder: decoder,

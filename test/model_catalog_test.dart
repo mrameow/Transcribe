@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:transcribe/src/engine.dart';
 import 'package:transcribe/src/model_catalog.dart';
 import 'package:transcribe/src/resampler.dart';
 
@@ -71,5 +72,27 @@ void main() {
     }
     final seconds = out.length / 16000;
     expect(crossings / seconds, closeTo(880, 15));
+  });
+
+  test('picks parakeet transducer files', () {
+    const d = 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8';
+    final files = pickModelFiles([
+      '$d/tokens.txt',
+      '$d/joiner.int8.onnx',
+      '$d/decoder.int8.onnx',
+      '$d/encoder.int8.onnx',
+      '$d/test_wavs/0.wav',
+    ], EngineKind.parakeet)!;
+    expect(files.joiner, '$d/joiner.int8.onnx');
+    expect(files.encoder, '$d/encoder.int8.onnx');
+  });
+
+  test('maps misdetected languages to the allowed ones', () {
+    expect(normalizeWhisperLanguage('<|ms|>'), 'ms');
+    expect(normalizeWhisperLanguage('id'), 'id');
+    expect(closestLanguage('id', ['en', 'ms']), 'ms');
+    expect(closestLanguage('jw', ['en', 'ms']), 'ms');
+    expect(closestLanguage('cy', ['ms', 'en']), 'en');
+    expect(closestLanguage('fr', ['en', 'ms']), 'en');
   });
 }

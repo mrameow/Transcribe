@@ -11,7 +11,7 @@ class TranscribeApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF3F51B5);
+    const seed = Color(0xFF5B45E6);
     return MaterialApp(
       title: 'Transcribe',
       debugShowCheckedModeBanner: false,

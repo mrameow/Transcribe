@@ -64,7 +64,8 @@ void main() {
     await tester.tap(find.text('Models'));
     await tester.pumpAndSettle();
     expect(find.text('Speech models'), findsOneWidget);
-    expect(find.text('Whisper Tiny · Multilingual'), findsOneWidget);
+    expect(find.text('Whisper Turbo · Multilingual'), findsOneWidget);
+    expect(find.text('Best for Malay + English'), findsOneWidget);
   });
 
   testWidgets('shows controls when a model is installed', (tester) async {
@@ -84,7 +85,7 @@ void main() {
     await pumpApp(tester);
     expect(find.text('System audio'), findsOneWidget);
     expect(find.text('Microphone'), findsOneWidget);
-    expect(find.text('Language'), findsWidgets);
+    expect(find.text('English + Malay'), findsOneWidget);
     expect(find.text('Start'), findsOneWidget);
   });
 

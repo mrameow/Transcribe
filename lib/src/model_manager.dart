@@ -33,18 +33,21 @@ class ModelManager {
 
   bool isInstalled(ModelInfo model) =>
       resolveModelFiles(dirFor(model), model.kind) != null &&
-      (model.kind != EngineKind.whisper || File(vadPath).existsSync());
+      (!model.needsVad || File(vadPath).existsSync());
 
-  EngineConfig? engineConfig(ModelInfo model, {String language = ''}) {
+  EngineConfig? engineConfig(
+    ModelInfo model, {
+    List<String> languages = const [],
+  }) {
     final files = resolveModelFiles(dirFor(model), model.kind);
     if (files == null) return null;
     return EngineConfig(
       kind: model.kind,
       files: files,
-      vadModel: model.kind == EngineKind.whisper ? vadPath : null,
-      language: language,
+      vadModel: model.needsVad ? vadPath : null,
+      languages: model.multilingual ? languages : const [],
       sentenceCase: model.sentenceCase,
-      numThreads: Platform.numberOfProcessors >= 8 ? 4 : 2,
+      numThreads: (Platform.numberOfProcessors - 1).clamp(2, 6),
     );
   }
 
@@ -61,7 +64,7 @@ class ModelManager {
   }) async {
     final client = http.Client();
     try {
-      if (model.kind == EngineKind.whisper && !File(vadPath).existsSync()) {
+      if (model.needsVad && !File(vadPath).existsSync()) {
         await _download(client, vadUrl, vadPath, (_) {});
       }
       final archive = p.join(modelsDir, '${model.id}.tar.bz2.part');
