@@ -62,18 +62,18 @@ float ReadSample(const BYTE* p, const SampleFormat& f) {
     case 16: {
       int16_t v;
       std::memcpy(&v, p, sizeof(v));
-      return v / 32768.0f;
+      return static_cast<float>(v) / 32768.0f;
     }
     case 24: {
       int32_t v = static_cast<int32_t>((uint32_t{p[0]} << 8) |
                                       (uint32_t{p[1]} << 16) |
                                       (uint32_t{p[2]} << 24));
-      return v / 2147483648.0f;
+      return static_cast<float>(v) / 2147483648.0f;
     }
     case 32: {
       int32_t v;
       std::memcpy(&v, p, sizeof(v));
-      return v / 2147483648.0f;
+      return static_cast<float>(v) / 2147483648.0f;
     }
     default:
       return 0.0f;
@@ -131,19 +131,19 @@ void AudioCapture::Run(bool loopback,
 
   auto fail = [&](const std::string& message) { failure = message; };
 
-  do {
+  auto capture_loop = [&]() {
     hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
                           IID_PPV_ARGS(&enumerator));
     if (FAILED(hr)) {
       fail(HrMessage("Creating the audio device enumerator", hr));
-      break;
+      return;
     }
     hr = enumerator->GetDefaultAudioEndpoint(loopback ? eRender : eCapture,
                                              eConsole, &device);
     if (FAILED(hr)) {
       fail(loopback ? "No speaker / headphone output device found"
                     : "No microphone found");
-      break;
+      return;
     }
 
     const DWORD stream_flags = loopback ? AUDCLNT_STREAMFLAGS_LOOPBACK : 0;
@@ -176,18 +176,18 @@ void AudioCapture::Run(bool loopback,
                             reinterpret_cast<void**>(&client));
       if (FAILED(hr)) {
         fail(HrMessage("Opening the audio device", hr));
-        break;
+        return;
       }
       hr = client->GetMixFormat(&mix_format);
       if (FAILED(hr)) {
         fail(HrMessage("Reading the audio format", hr));
-        break;
+        return;
       }
       hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, stream_flags,
                               kBufferDuration, 0, mix_format, nullptr);
       if (FAILED(hr)) {
         fail(HrMessage("Initializing audio capture", hr));
-        break;
+        return;
       }
       format = DescribeFormat(mix_format);
       rate = static_cast<int>(mix_format->nSamplesPerSec);
@@ -196,12 +196,12 @@ void AudioCapture::Run(bool loopback,
     hr = client->GetService(IID_PPV_ARGS(&capture));
     if (FAILED(hr)) {
       fail(HrMessage("Getting the capture service", hr));
-      break;
+      return;
     }
     hr = client->Start();
     if (FAILED(hr)) {
       fail(HrMessage("Starting audio capture", hr));
-      break;
+      return;
     }
 
     ready(true, rate, "");
@@ -228,7 +228,7 @@ void AudioCapture::Run(bool loopback,
             for (int c = 0; c < format.channels; c++) {
               sum += ReadSample(frame + c * bytes_per_sample, format);
             }
-            out[start + i] = sum / format.channels;
+            out[start + i] = sum / static_cast<float>(format.channels);
           }
         }
         capture->ReleaseBuffer(frames);
@@ -245,7 +245,8 @@ void AudioCapture::Run(bool loopback,
       if (!out.empty() && on_data_) on_data_(std::move(out));
     }
     client->Stop();
-  } while (false);
+  };
+  capture_loop();
 
   if (!reported) ready(false, 0, failure);
 
