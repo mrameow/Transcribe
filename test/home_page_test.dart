@@ -38,7 +38,7 @@ void main() {
           call,
         ) async {
           if (call.method == 'capabilities') {
-            return {'system': true, 'mic': true};
+            return {'system': true, 'mic': true, 'both': true};
           }
           return null;
         });
@@ -85,6 +85,7 @@ void main() {
     await pumpApp(tester);
     expect(find.text('System audio'), findsOneWidget);
     expect(find.text('Microphone'), findsOneWidget);
+    expect(find.text('System + mic'), findsOneWidget);
     expect(find.text('English + Malay'), findsOneWidget);
     expect(find.text('Start'), findsOneWidget);
   });

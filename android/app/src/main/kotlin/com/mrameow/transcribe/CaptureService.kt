@@ -39,6 +39,8 @@ class CaptureService : Service() {
         fun onStopped()
     }
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     @Volatile
     private var running = false
     private var thread: Thread? = null
@@ -58,6 +60,8 @@ class CaptureService : Service() {
             goForeground(system)
             record = if (system) createPlaybackRecord(intent) else createMicRecord()
             startReading(record!!)
+            isRunning = true
+            mainHandler.post { CallHelperService.instance?.showCaptions(CallHelperService.pendingText) }
             listener?.onStarted(SAMPLE_RATE)
         } catch (e: Exception) {
             listener?.onError(e.message ?: e.toString())
@@ -111,8 +115,12 @@ class CaptureService : Service() {
 
     @SuppressLint("MissingPermission") // Checked by MainActivity before starting.
     private fun createMicRecord(): AudioRecord {
+        // VOICE_RECOGNITION: unprocessed audio tuned for speech recognition.
+        // It is also the source Android allows an accessibility service
+        // (the call helper) to record while a call app such as Google Meet
+        // is using the microphone.
         val r = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
@@ -177,6 +185,9 @@ class CaptureService : Service() {
     private fun stopCapture() {
         val wasRunning = running || record != null
         running = false
+        isRunning = false
+        CallHelperService.pendingText = ""
+        mainHandler.post { CallHelperService.instance?.hideCaptions() }
         try {
             record?.stop()
         } catch (_: IllegalStateException) {
@@ -205,5 +216,10 @@ class CaptureService : Service() {
 
         @Volatile
         var listener: Listener? = null
+
+        /** True while audio is being captured. */
+        @Volatile
+        var isRunning = false
+            private set
     }
 }

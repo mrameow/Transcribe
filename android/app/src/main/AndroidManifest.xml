@@ -38,6 +38,18 @@
             android:name=".CaptureService"
             android:exported="false"
             android:foregroundServiceType="microphone|mediaProjection" />
+        <service
+            android:name=".CallHelperService"
+            android:exported="false"
+            android:label="@string/call_helper_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/call_helper_service" />
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

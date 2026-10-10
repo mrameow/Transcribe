@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The call helper does not read the screen; it only shows the floating
+     caption box so Android lets Transcribe keep using the microphone during
+     calls (Google Meet, Zoom, WhatsApp...). -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAnnouncement"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="false"
+    android:notificationTimeout="1000"
+    android:description="@string/call_helper_description"
+    android:summary="@string/call_helper_summary" />

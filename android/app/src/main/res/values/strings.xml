@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="call_helper_label">Transcribe call helper</string>
+    <string name="call_helper_summary">Lets Transcribe hear Google Meet and other calls, and shows live captions on top of them.</string>
+    <string name="call_helper_description">While a call is active, Android only gives the microphone to the call app and to accessibility services. Turning on the Transcribe call helper lets Transcribe keep listening (put the call on speaker) and shows a floating caption box over the call. It does not read the screen or send anything off your device.</string>
+</resources>

@@ -6,9 +6,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -51,10 +53,36 @@ class MainActivity : FlutterActivity() {
                     mapOf(
                         "system" to (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q),
                         "mic" to true,
+                        "callHelper" to true,
                     )
                 )
 
                 "start" -> start(call.argument<String>("source") ?: "mic", result)
+                "callHelperEnabled" -> result.success(CallHelperService.isEnabled(this))
+                "openCallHelperSettings" -> {
+                    startActivity(
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                    result.success(null)
+                }
+
+                "openAppSettings" -> {
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(Uri.fromParts("package", packageName, null))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                    result.success(null)
+                }
+
+                "captions" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    CallHelperService.pendingText = text
+                    if (CaptureService.isRunning) CallHelperService.instance?.showCaptions(text)
+                    result.success(null)
+                }
+
                 "stop" -> {
                     stopService(Intent(this, CaptureService::class.java))
                     result.success(null)

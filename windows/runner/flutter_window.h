@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "audio_capture.h"
+#include "audio_mixer.h"
 
 #include "win32_window.h"
 
@@ -40,9 +41,19 @@ class FlutterWindow : public Win32Window {
 
   // Audio capture bridge, see RegisterAudioChannels().
   void RegisterAudioChannels();
+  bool StartCapture(const std::string& source, int* sample_rate,
+                    std::string* error);
+  void StopCapture();
+  // Called on capture threads; hands audio to the platform thread.
+  void QueueAudio(std::vector<float>&& samples);
+  void QueueError(const std::string& message);
   void DeliverAudio();
 
+  // Default output (loopback) or microphone.
   AudioCapture audio_capture_;
+  // Microphone, in "both" mode.
+  AudioCapture mic_capture_;
+  std::unique_ptr<AudioMixer> mixer_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       control_channel_;
   std::unique_ptr<flutter::EventChannel<flutter::EncodableValue>>

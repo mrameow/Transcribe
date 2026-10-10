@@ -52,7 +52,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
-  audio_capture_.Stop();
+  StopCapture();
   audio_sink_ = nullptr;
   control_channel_ = nullptr;
   audio_channel_ = nullptr;
@@ -129,55 +129,102 @@ void FlutterWindow::RegisterAudioChannels() {
           result->Success(flutter::EncodableValue(flutter::EncodableMap{
               {flutter::EncodableValue("system"), flutter::EncodableValue(true)},
               {flutter::EncodableValue("mic"), flutter::EncodableValue(true)},
+              {flutter::EncodableValue("both"), flutter::EncodableValue(true)},
           }));
         } else if (method == "start") {
-          bool loopback = true;
+          std::string source = "system";
           if (const auto* args =
                   std::get_if<flutter::EncodableMap>(call.arguments())) {
             auto it = args->find(flutter::EncodableValue("source"));
             if (it != args->end()) {
-              if (const auto* source = std::get_if<std::string>(&it->second)) {
-                loopback = *source != "mic";
+              if (const auto* value = std::get_if<std::string>(&it->second)) {
+                source = *value;
               }
             }
           }
-          {
-            std::lock_guard<std::mutex> lock(audio_mutex_);
-            audio_queue_.clear();
-            audio_error_.clear();
-          }
-          HWND hwnd = GetHandle();
           int sample_rate = 0;
           std::string error;
-          const bool ok = audio_capture_.Start(
-              loopback,
-              [this, hwnd](std::vector<float>&& samples) {
-                {
-                  std::lock_guard<std::mutex> lock(audio_mutex_);
-                  audio_queue_.push_back(std::move(samples));
-                }
-                PostMessage(hwnd, kAudioMessage, 0, 0);
-              },
-              [this, hwnd](const std::string& message) {
-                {
-                  std::lock_guard<std::mutex> lock(audio_mutex_);
-                  audio_error_ = message;
-                }
-                PostMessage(hwnd, kAudioMessage, 0, 0);
-              },
-              &sample_rate, &error);
-          if (ok) {
+          if (StartCapture(source, &sample_rate, &error)) {
             result->Success(flutter::EncodableValue(sample_rate));
           } else {
             result->Error("capture_failed", error);
           }
         } else if (method == "stop") {
-          audio_capture_.Stop();
+          StopCapture();
           result->Success();
         } else {
           result->NotImplemented();
         }
       });
+}
+
+void FlutterWindow::QueueAudio(std::vector<float>&& samples) {
+  if (samples.empty()) return;
+  {
+    std::lock_guard<std::mutex> lock(audio_mutex_);
+    audio_queue_.push_back(std::move(samples));
+  }
+  PostMessage(GetHandle(), kAudioMessage, 0, 0);
+}
+
+void FlutterWindow::QueueError(const std::string& message) {
+  {
+    std::lock_guard<std::mutex> lock(audio_mutex_);
+    audio_error_ = message;
+  }
+  PostMessage(GetHandle(), kAudioMessage, 0, 0);
+}
+
+// |source| is "system" (loopback), "mic", or "both" (loopback + mic mixed,
+// so your own voice is included in meeting transcripts).
+bool FlutterWindow::StartCapture(const std::string& source, int* sample_rate,
+                                 std::string* error) {
+  StopCapture();
+  {
+    std::lock_guard<std::mutex> lock(audio_mutex_);
+    audio_queue_.clear();
+    audio_error_.clear();
+  }
+  auto on_error = [this](const std::string& message) { QueueError(message); };
+
+  if (source != "both") {
+    return audio_capture_.Start(
+        source != "mic",
+        [this](std::vector<float>&& samples) { QueueAudio(std::move(samples)); },
+        on_error, sample_rate, error);
+  }
+
+  mixer_ = std::make_unique<AudioMixer>();
+  AudioMixer* mixer = mixer_.get();
+  int system_rate = 0;
+  if (!audio_capture_.Start(
+          true,
+          [mixer](std::vector<float>&& samples) { mixer->AddSystem(samples); },
+          on_error, &system_rate, error)) {
+    mixer_ = nullptr;
+    return false;
+  }
+  mixer->SetSystemRate(system_rate);
+  int mic_rate = 0;
+  if (!mic_capture_.Start(
+          false,
+          [this, mixer](std::vector<float>&& samples) {
+            QueueAudio(mixer->AddMic(samples));
+          },
+          on_error, &mic_rate, error)) {
+    audio_capture_.Stop();
+    mixer_ = nullptr;
+    return false;
+  }
+  mixer->SetMicRate(mic_rate);
+  *sample_rate = AudioMixer::kRate;
+  return true;
+}
+
+void FlutterWindow::StopCapture() {
+  audio_capture_.Stop();
+  mic_capture_.Stop();
+  mixer_ = nullptr;
 }
 
 void FlutterWindow::DeliverAudio() {

@@ -61,13 +61,24 @@ Whisper and Parakeet write a full sentence at a time, usually a few seconds afte
 
 | | Windows | Android |
 |---|---|---|
-| Google Meet / Zoom / Teams | ✅ System audio | ⚠️ Microphone only (see below) |
+| Google Meet / Zoom / Teams | ✅ **System + mic** (both sides) | ✅ **Microphone + call helper**, call on speaker |
 | YouTube, video players, browser audio | ✅ System audio | ✅ Other apps (Android 10+) |
 | Your own voice | ✅ Microphone | ✅ Microphone |
 
-**Android and calls:** Android doesn't let any app record the audio of voice or video calls (Meet, Zoom, WhatsApp, phone calls). This is an Android rule. For calls on a phone, choose **Microphone** and put the call on **speaker**.
+### Google Meet on Android: turn on the call helper
 
-**Windows:** System audio records what plays on your default speakers or headphones. Your own voice isn't included; use **Microphone** if you need it.
+During a call, Android gives the microphone only to the call app and to **accessibility services**. Every other app hears silence. Android also never lets apps record call audio directly, and virtual audio drivers can't be installed without rooting the phone. So Transcribe includes a small accessibility service, the **Transcribe call helper**. It shows live captions floating over the call, and while those captions are on screen, Android lets Transcribe keep using the microphone.
+
+1. In Transcribe, tap the **"Transcribing Google Meet / Zoom calls?"** card, then **Open Accessibility**.
+2. Samsung: **Installed apps → Transcribe call helper → On**.
+3. If it's greyed out ("Restricted setting"): open **App info** for Transcribe, tap **⋮ → Allow restricted settings**, and try step 2 again. Android does this for apps installed from outside the Play Store.
+4. Choose **Microphone**, press **Start**, switch to Meet and put the call on **speaker**. With headphones, only your own voice is heard.
+
+The call helper doesn't read your screen, and nothing leaves your phone.
+
+### Meetings on Windows
+
+Choose **System + mic**. It mixes what you hear (the other people) with your microphone (you), so both sides are transcribed. You don't need a virtual audio cable.
 
 ### Where transcripts are saved
 

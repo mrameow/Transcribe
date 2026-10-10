@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
@@ -10,6 +11,10 @@ enum AudioSourceKind {
 
   /// The microphone.
   mic,
+
+  /// Windows: system audio and microphone mixed, so both sides of a meeting
+  /// (the other people and you) are transcribed.
+  both,
 }
 
 /// Talks to the native audio capture code in `android/` and `windows/runner/`.
@@ -26,6 +31,7 @@ class AudioCapture {
       return {
         if (caps?['system'] ?? false) AudioSourceKind.system,
         if (caps?['mic'] ?? false) AudioSourceKind.mic,
+        if (caps?['both'] ?? false) AudioSourceKind.both,
       };
     } on MissingPluginException {
       return {};
@@ -61,6 +67,30 @@ class AudioCapture {
       throw const AudioCaptureException(
         'Audio capture is only available on Android and Windows',
       );
+    }
+  }
+
+  /// Android: whether the "Transcribe call helper" accessibility service is
+  /// on. It is needed to hear the microphone while a call app (Google Meet,
+  /// Zoom...) is active, and it shows the floating captions.
+  static Future<bool> callHelperEnabled() async {
+    if (!Platform.isAndroid) return false;
+    return await _control.invokeMethod<bool>('callHelperEnabled') ?? false;
+  }
+
+  static Future<void> openCallHelperSettings() =>
+      _control.invokeMethod<void>('openCallHelperSettings');
+
+  static Future<void> openAppSettings() =>
+      _control.invokeMethod<void>('openAppSettings');
+
+  /// Text for the floating caption box (Android call helper).
+  static Future<void> showCaptions(String text) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _control.invokeMethod<void>('captions', {'text': text});
+    } on MissingPluginException {
+      // Not available.
     }
   }
 

@@ -27,7 +27,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   ModelDownloads? _downloads;
   Settings? _settings;
   Set<AudioSourceKind> _sources = {};
@@ -53,10 +53,25 @@ class _HomePageState extends State<HomePage> {
   DateTime? _startedAt;
   final _scroll = ScrollController();
 
+  bool _callHelper = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _init();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-check after the user comes back from Accessibility settings.
+    if (state == AppLifecycleState.resumed) _refreshCallHelper();
+  }
+
+  Future<void> _refreshCallHelper() async {
+    if (!Platform.isAndroid) return;
+    final on = await AudioCapture.callHelperEnabled();
+    if (mounted && on != _callHelper) setState(() => _callHelper = on);
   }
 
   Future<void> _init() async {
@@ -86,6 +101,7 @@ class _HomePageState extends State<HomePage> {
       _saveDir = settings.getString('saveDir');
       _ensureModelSelected();
     });
+    await _refreshCallHelper();
   }
 
   void _onModelsChanged() => setState(_ensureModelSelected);
@@ -104,6 +120,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _capture.stop();
     _session?.stop();
     _clock?.cancel();
@@ -229,6 +246,13 @@ class _HomePageState extends State<HomePage> {
         _partial = update.text;
       }
     });
+    if (_callHelper) {
+      final last = _lines.isEmpty ? '' : _lines.last.text;
+      final partial = _partial == '…' ? '' : _partial;
+      AudioCapture.showCaptions(
+        [last, partial].where((t) => t.isNotEmpty).join(' '),
+      );
+    }
     if (atBottom) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scroll.hasClients) {
@@ -445,54 +469,117 @@ class _HomePageState extends State<HomePage> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      child: Wrap(
-        spacing: 16,
-        runSpacing: 12,
-        crossAxisAlignment: WrapCrossAlignment.center,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SegmentedButton<AudioSourceKind>(
-            segments: [
-              ButtonSegment(
-                value: AudioSourceKind.system,
-                icon: const Icon(Icons.speaker),
-                label: Text(Platform.isAndroid ? 'Other apps' : 'System audio'),
-                enabled: _sources.contains(AudioSourceKind.system),
-              ),
-              const ButtonSegment(
-                value: AudioSourceKind.mic,
-                icon: Icon(Icons.mic),
-                label: Text('Microphone'),
-              ),
-            ],
-            selected: {_source},
-            onSelectionChanged: busy
-                ? null
-                : (s) {
-                    setState(() => _source = s.first);
-                    _settings?.setString('source', s.first.name);
-                  },
-          ),
-          DropdownMenu<String>(
-            key: ValueKey('model-${installed.length}'),
-            enabled: !busy,
-            label: const Text('Model'),
-            initialSelection: _modelId,
-            width: 280,
-            dropdownMenuEntries: [
-              for (final m in installed)
-                DropdownMenuEntry(value: m.id, label: m.title),
-            ],
-            onSelected: (id) {
-              setState(() => _modelId = id);
-              _settings?.setString('model', id);
-            },
-          ),
-          if (model?.multilingual ?? false)
-            OutlinedButton.icon(
-              onPressed: busy ? null : _chooseLanguages,
-              icon: const Icon(Icons.translate),
-              label: Text(describeLanguages(_languages)),
+          _buildSourceAndModel(busy, installed, model),
+          if (Platform.isAndroid) ...[
+            const SizedBox(height: 12),
+            _CallHelperCard(enabled: _callHelper, onSetup: _setupCallHelper),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSourceAndModel(
+    bool busy,
+    List<ModelInfo> installed,
+    ModelInfo? model,
+  ) {
+    return Wrap(
+      spacing: 16,
+      runSpacing: 12,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        SegmentedButton<AudioSourceKind>(
+          segments: [
+            ButtonSegment(
+              value: AudioSourceKind.system,
+              icon: const Icon(Icons.speaker),
+              label: Text(Platform.isAndroid ? 'Other apps' : 'System audio'),
+              enabled: _sources.contains(AudioSourceKind.system),
             ),
+            const ButtonSegment(
+              value: AudioSourceKind.mic,
+              icon: Icon(Icons.mic),
+              label: Text('Microphone'),
+            ),
+            if (_sources.contains(AudioSourceKind.both))
+              const ButtonSegment(
+                value: AudioSourceKind.both,
+                icon: Icon(Icons.groups),
+                label: Text('System + mic'),
+              ),
+          ],
+          selected: {_source},
+          onSelectionChanged: busy
+              ? null
+              : (s) {
+                  setState(() => _source = s.first);
+                  _settings?.setString('source', s.first.name);
+                },
+        ),
+        DropdownMenu<String>(
+          key: ValueKey('model-${installed.length}'),
+          enabled: !busy,
+          label: const Text('Model'),
+          initialSelection: _modelId,
+          width: 280,
+          dropdownMenuEntries: [
+            for (final m in installed)
+              DropdownMenuEntry(value: m.id, label: m.title),
+          ],
+          onSelected: (id) {
+            setState(() => _modelId = id);
+            _settings?.setString('model', id);
+          },
+        ),
+        if (model?.multilingual ?? false)
+          OutlinedButton.icon(
+            onPressed: busy ? null : _chooseLanguages,
+            icon: const Icon(Icons.translate),
+            label: Text(describeLanguages(_languages)),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _setupCallHelper() async {
+    await showDialog<void>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Transcribe Google Meet calls'),
+        content: const SingleChildScrollView(
+          child: Text(
+            'While a call is running, Android only lets the call app and '
+            'accessibility services use the microphone. Turn on the '
+            '"Transcribe call helper" so Transcribe can keep listening. It '
+            'also shows live captions floating over the call.\n\n'
+            '1. Tap "Open Accessibility".\n'
+            '2. Samsung: Installed apps → Transcribe call helper → On.\n'
+            '3. If it is greyed out ("Restricted setting"): tap "Open app '
+            'info", then ⋮ (top right) → "Allow restricted settings", and '
+            'try step 2 again.\n\n'
+            'During the call: choose Microphone, press Start, then put the '
+            'Meet call on speaker. With headphones only your own voice is '
+            'heard.\n\n'
+            'The helper does not read your screen and nothing leaves your '
+            'phone.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: AudioCapture.openAppSettings,
+            child: const Text('Open app info'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(c);
+              AudioCapture.openCallHelperSettings();
+            },
+            child: const Text('Open Accessibility'),
+          ),
         ],
       ),
     );
@@ -639,7 +726,7 @@ class _EmptyHint extends StatelessWidget {
     final String body;
     if (running) {
       title = 'Listening…';
-      body = source == AudioSourceKind.system
+      body = source != AudioSourceKind.mic
           ? 'Play your meeting or video. Text appears here as people speak.'
           : 'Speak, or hold the device near the speaker.';
     } else if (Platform.isAndroid) {
@@ -647,16 +734,14 @@ class _EmptyHint extends StatelessWidget {
       body =
           '"Other apps" captures sound from YouTube, browsers and most '
           'video apps (Android 10+).\n\n'
-          'Android does not let any app record call audio from Google Meet, '
-          'Zoom, WhatsApp etc. For calls, choose "Microphone" and put the '
-          'call on speaker.';
+          'For Google Meet, Zoom or WhatsApp calls: turn on the call helper '
+          'above, choose "Microphone" and put the call on speaker.';
     } else {
       title = 'Transcribe meetings and videos offline';
       body =
           '"System audio" captures everything playing through your '
           'speakers or headphones: Google Meet, Zoom, Teams, YouTube…\n\n'
-          'It does not include your own voice. Choose "Microphone" to '
-          'transcribe yourself.';
+          'For meetings, choose "System + mic" to include your own voice too.';
     }
     return Center(
       child: SingleChildScrollView(
@@ -684,6 +769,47 @@ class _EmptyHint extends StatelessWidget {
                 style: theme.textTheme.bodyMedium,
                 textAlign: TextAlign.center,
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CallHelperCard extends StatelessWidget {
+  const _CallHelperCard({required this.enabled, required this.onSetup});
+
+  final bool enabled;
+  final VoidCallback onSetup;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Material(
+      color: enabled ? scheme.secondaryContainer : scheme.tertiaryContainer,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onSetup,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Row(
+            children: [
+              Icon(enabled ? Icons.check_circle : Icons.call),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  enabled
+                      ? 'Call helper is on. For Google Meet: choose '
+                            'Microphone and put the call on speaker.'
+                      : 'Transcribing Google Meet / Zoom calls? Turn on the '
+                            'call helper.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+              if (!enabled) const Icon(Icons.chevron_right),
             ],
           ),
         ),
